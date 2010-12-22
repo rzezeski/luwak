@@ -139,7 +139,15 @@ update_root(Riak, Obj, NewRoot) ->
                                {ancestors, [OldRoot|Ancestors]}),
     ObjVal3 = lists:keyreplace(root, 1, ObjVal2, {root, NewRoot}),
     Obj2 = riak_object:update_value(Obj, ObjVal3),
-    Riak:put(Obj2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
+    Result = Riak:put(Obj2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]),
+    case OldRoot of
+        undefined ->
+            Result;
+        _ ->
+            ReapObj = riak_object:new(?R_BUCKET, OldRoot, reap),
+            Riak:put(ReapObj, 2, 2, ?TIMEOUT_DEFAULT),
+            Result
+    end.
 
 %% @private
 update_checksum(Riak, Obj, ChecksumFun) ->

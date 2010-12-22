@@ -1,6 +1,7 @@
 -module(luwak_file_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("luwak.hrl").
 
 object_creation_test() ->
   test_helper:riak_test(fun(Riak) ->  
@@ -33,3 +34,21 @@ delete_test() ->
       ?assertEqual({ok, false}, luwak_file:exists(Riak, <<"file1">>))
     end).
 
+reap_test() ->
+    test_helper:riak_test(
+      fun(Riak) ->
+              {ok, F1} = luwak_file:create(Riak, <<"reap">>, dict:new()),
+              ?assertEqual(undefined, luwak_file:get_property(F1, root)),
+              {ok, _, F2} = luwak_io:put_range(Riak,
+                                               F1,
+                                               0,
+                                               <<"reap check">>),
+              RootName = luwak_file:get_property(F2, root),
+              {ok, _, F3} = luwak_io:put_range(Riak,
+                                               F2,
+                                               10,
+                                               <<"...ok">>),
+              NewRootName = luwak_file:get_property(F3, root),
+              ?assertNot(RootName =:= NewRootName),
+              {ok, _Obj} = Riak:get(?R_BUCKET, RootName)
+      end).

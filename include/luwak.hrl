@@ -2,6 +2,7 @@
 -record(n, {created,children,refs=1}).
 -define(N_BUCKET, <<"luwak_node">>).
 -define(O_BUCKET, <<"luwak_tld">>).
+-define(R_BUCKET, <<"luwak_reap">>).
 -define(ORDER_DEFAULT, 250).
 -define(BLOCK_DEFAULT, 1000000).
 -define(HASH_LEN, 512).

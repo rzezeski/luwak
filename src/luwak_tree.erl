@@ -7,7 +7,8 @@
          get_range/6,
          get_range/7,
          truncate/7,
-         truncate/1]).
+         truncate/1,
+         reap/1]).
 
 -include_lib("luwak.hrl").
 
@@ -329,3 +330,50 @@ create_node(Riak, Children) ->
 truncate(List) when is_list(List) ->
     lists:map(fun({Data,Length}) -> {truncate(Data),Length} end, List);
 truncate(<<Prefix:8/binary, _/binary>>) -> Prefix.
+
+reap(Riak) ->
+    {ok, ToReap} = Riak:list_keys(?R_BUCKET),
+    ToReap2 = [{?R_BUCKET, Name} || Name <- ToReap],
+    Del =
+        fun({B, N}) ->
+                ok = Riak:delete(B, N, 2)
+        end,
+    ok = reap(Riak, ToReap2),
+    lists:map(Del, ToReap2).
+
+reap(_Riak, []) ->
+    ok;
+reap(Riak, Nodes) ->
+    Decr =
+        fun(N, undefined, none) ->
+                {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N)),
+                decr_ref(Riak, LiveObj, riak_object:get_value(LiveObj))
+        end,
+    {ok, Children} = Riak:mapred(Nodes,
+                                 [{map, {qfun, Decr}, none, true}]),
+    reap(Riak, Children).
+
+decr_ref(Riak, Node, Value = #n{children=Children, refs=Refs}) ->
+    Node2 = riak_object:update_value(Node, Value#n{refs = Refs - 1}),
+    {ok, _} = Riak:put(Node2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]),
+    if
+        Refs =:= 1 ->
+            Dead = riak_object:new(?D_BUCKET, riak_object:key(Node), dead),
+            {ok, _} = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]);
+        true ->
+            ok
+    end,
+    [{?N_BUCKET, Name} || {Name,_} <- Children] ;
+decr_ref(Riak, Block, Value) ->
+    Refs = proplists:get_value(refs, Value),
+    Value2 = lists:keyreplace(refs, 1, Value, {refs, Refs - 1}),
+    Block2 = riak_object:update_value(Block, Value2),
+    {ok, _} = Riak:put(Block2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]),
+    if
+        Refs =:= 1 ->
+            Dead = riak_object:new(?D_BUCKET, riak_object:key(Block), dead),
+            {ok, _} = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]);
+        true ->
+            ok
+    end,
+    [].

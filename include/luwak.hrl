@@ -3,6 +3,7 @@
 -define(N_BUCKET, <<"luwak_node">>).
 -define(O_BUCKET, <<"luwak_tld">>).
 -define(R_BUCKET, <<"luwak_reap">>).
+-define(D_BUCKET, <<"luwak_dead">>).
 -define(ORDER_DEFAULT, 250).
 -define(BLOCK_DEFAULT, 1000000).
 -define(HASH_LEN, 512).

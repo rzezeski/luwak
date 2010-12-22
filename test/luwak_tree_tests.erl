@@ -121,3 +121,17 @@ create_node_ref_test() ->
               {ok, Node2} = luwak_tree:create_node(Riak, children),
               #n{refs=2} = riak_object:get_value(Node2)
       end).
+
+reap_test() ->
+    test_helper:riak_test(
+      fun(Riak) ->
+              {ok, F1} = luwak_file:create(Riak, <<"reap_it">>, dict:new()),
+              {ok, _, F2} = luwak_io:put_range(Riak, F1, 0, <<"reap old root">>),
+              RootName = luwak_file:get_property(F2, root),
+              {ok, _, _} = luwak_io:put_range(Riak, F2, 0, <<"RootName is now reaped">>),
+              {ok, _Obj} = Riak:get(?R_BUCKET, RootName),
+              ?assert(lists:all(fun(ok) -> true; (_) -> false end,
+                                luwak_tree:reap(Riak))),
+              ?assertEqual({error, notfound}, Riak:get(?R_BUCKET, RootName)),
+              {ok, _Obj2} = Riak:get(?D_BUCKET, RootName)
+      end).

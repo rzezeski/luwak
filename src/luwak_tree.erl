@@ -11,6 +11,10 @@
 
 -include_lib("luwak.hrl").
 
+-ifdef(TEST).
+-compile(export_all).
+-endif.
+
 %%=======================================
 %% Public API
 %%=======================================
@@ -307,9 +311,19 @@ map_sublist_1(Fun, N, [E|List], Sublist, Acc) ->
 
 create_node(Riak, Children) ->
     ?debugFmt("create_node(Riak, ~p)~n", [Children]),
-    N = #n{created=now(),children=Children},
     Name = skerl:hexhash(?HASH_LEN, term_to_binary(Children)),
-    Obj = riak_object:new(?N_BUCKET, Name, N),
+    Obj =
+        case Riak:get(?N_BUCKET, Name) of
+            {ok, N} ->
+                Value = #n{refs=Refs} = riak_object:get_value(N),
+                %% Refs = proplists:get_value(refs,Value),
+                %% Value2 = lists:keyreplace(refs,1,Value,{refs,Refs+1}),
+                Value2 = Value#n{refs=Refs+1},
+                riak_object:update_value(N, Value2);
+            {error, notfound} ->
+                riak_object:new(?N_BUCKET, Name, #n{created=now(),
+                                                    children=Children})
+        end,
     Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).
 
 truncate(List) when is_list(List) ->

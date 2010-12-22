@@ -1,5 +1,5 @@
 
--record(n, {created,children}).
+-record(n, {created,children,refs=1}).
 -define(N_BUCKET, <<"luwak_node">>).
 -define(O_BUCKET, <<"luwak_tld">>).
 -define(ORDER_DEFAULT, 250).

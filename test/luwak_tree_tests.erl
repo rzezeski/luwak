@@ -112,3 +112,12 @@ block_at_test() ->
       timer:sleep(1000),
       ?assertEqual(<<"you">>, Data)
     end).
+
+create_node_ref_test() ->
+    test_helper:riak_test(
+      fun(Riak) ->
+              {ok, Node} = luwak_tree:create_node(Riak, children),
+              #n{refs=1} = riak_object:get_value(Node),
+              {ok, Node2} = luwak_tree:create_node(Riak, children),
+              #n{refs=2} = riak_object:get_value(Node2)
+      end).

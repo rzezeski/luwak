@@ -338,21 +338,21 @@ reap(Riak) ->
 
 reap(Riak, Timeout) ->
     {ok, ToReap} = Riak:list_keys(?R_BUCKET),
-    ToReap2 = [{?R_BUCKET, Name} || Name <- ToReap],
+    ToReap2 = [{?N_BUCKET, Name} || Name <- ToReap],
     Del =
         fun({B, N}) ->
                 ok = Riak:delete(B, N, 2)
         end,
     ok = reap(Riak, Timeout, ToReap2),
-    lists:map(Del, ToReap2).
+    ToDel = [{?R_BUCKET, Name} || Name <- ToReap],
+    lists:map(Del, ToDel).
 
 reap(_Riak, _Timeout, []) ->
     ok;
 reap(Riak, Timeout, Nodes) ->
     Decr =
         fun(N, undefined, none) ->
-                {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N), 2),
-                reap_node(Riak, LiveObj, riak_object:get_value(LiveObj))
+                reap_node(Riak, N, riak_object:get_value(N))
         end,
     {ok, Children} = Riak:mapred(Nodes,
                                  [{map, {qfun, Decr}, none, true}],

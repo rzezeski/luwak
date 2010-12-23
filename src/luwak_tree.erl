@@ -347,7 +347,7 @@ reap(_Riak, []) ->
 reap(Riak, Nodes) ->
     Decr =
         fun(N, undefined, none) ->
-                {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N)),
+                {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N), 2),
                 decr_ref(Riak, LiveObj, riak_object:get_value(LiveObj))
         end,
     {ok, Children} = Riak:mapred(Nodes,

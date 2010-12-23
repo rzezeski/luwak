@@ -9,6 +9,7 @@
          truncate/7,
          truncate/1,
          reap/1,
+         reap/2,
          bury/1]).
 
 -include_lib("luwak.hrl").
@@ -333,26 +334,30 @@ truncate(List) when is_list(List) ->
 truncate(<<Prefix:8/binary, _/binary>>) -> Prefix.
 
 reap(Riak) ->
+    reap(Riak, ?TIMEOUT_DEFAULT).
+
+reap(Riak, Timeout) ->
     {ok, ToReap} = Riak:list_keys(?R_BUCKET),
     ToReap2 = [{?R_BUCKET, Name} || Name <- ToReap],
     Del =
         fun({B, N}) ->
                 ok = Riak:delete(B, N, 2)
         end,
-    ok = reap(Riak, ToReap2),
+    ok = reap(Riak, Timeout, ToReap2),
     lists:map(Del, ToReap2).
 
-reap(_Riak, []) ->
+reap(_Riak, _Timeout, []) ->
     ok;
-reap(Riak, Nodes) ->
+reap(Riak, Timeout, Nodes) ->
     Decr =
         fun(N, undefined, none) ->
                 {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N), 2),
                 decr_ref(Riak, LiveObj, riak_object:get_value(LiveObj))
         end,
     {ok, Children} = Riak:mapred(Nodes,
-                                 [{map, {qfun, Decr}, none, true}]),
-    reap(Riak, Children).
+                                 [{map, {qfun, Decr}, none, true}],
+                                 Timeout),
+    reap(Riak, Timeout, Children).
 
 decr_ref(Riak, Node, Value = #n{children=Children, refs=Refs}) ->
     Node2 = riak_object:update_value(Node, Value#n{refs = Refs - 1}),

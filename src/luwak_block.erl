@@ -9,7 +9,7 @@
 create(Riak, Data) ->
     Hash = skerl:hexhash(?HASH_LEN, Data),
     Block =
-        case Riak:get(?N_BUCKET, Hash) of
+        case Riak:get(?N_BUCKET, Hash, 2) of
             {ok, B} ->
                 Value = riak_object:get_value(B),
                 Refs = proplists:get_value(refs,Value),

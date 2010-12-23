@@ -315,7 +315,7 @@ create_node(Riak, Children) ->
     ?debugFmt("create_node(Riak, ~p)~n", [Children]),
     Name = skerl:hexhash(?HASH_LEN, term_to_binary(Children)),
     Obj =
-        case Riak:get(?N_BUCKET, Name) of
+        case Riak:get(?N_BUCKET, Name, 2) of
             {ok, N} ->
                 Value = #n{refs=Refs} = riak_object:get_value(N),
                 %% Refs = proplists:get_value(refs,Value),

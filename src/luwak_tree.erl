@@ -352,33 +352,30 @@ reap(Riak, Timeout, Nodes) ->
     Decr =
         fun(N, undefined, none) ->
                 {ok, LiveObj} = Riak:get(?N_BUCKET, riak_object:key(N), 2),
-                decr_ref(Riak, LiveObj, riak_object:get_value(LiveObj))
+                reap_node(Riak, LiveObj, riak_object:get_value(LiveObj))
         end,
     {ok, Children} = Riak:mapred(Nodes,
                                  [{map, {qfun, Decr}, none, true}],
                                  Timeout),
     reap(Riak, Timeout, Children).
 
-decr_ref(Riak, Node, Value = #n{children=Children, refs=Refs}) ->
-    Node2 = riak_object:update_value(Node, Value#n{refs = Refs - 1}),
-    {ok, _} = Riak:put(Node2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]),
+reap_node(Riak, Node, #n{children=Children, refs=Refs}) ->
     if
         Refs =:= 1 ->
+            %% only 1 ref to it and it's being reaped, thus this node
+            %% is dead
             Dead = riak_object:new(?D_BUCKET, riak_object:key(Node), dead),
-            {ok, _} = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]);
+            ok = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT);
         true ->
             ok
     end,
     [{?N_BUCKET, Name} || {Name,_} <- Children];
-decr_ref(Riak, Block, Value) ->
+reap_node(Riak, Block, Value) ->
     Refs = proplists:get_value(refs, Value),
-    Value2 = lists:keyreplace(refs, 1, Value, {refs, Refs - 1}),
-    Block2 = riak_object:update_value(Block, Value2),
-    {ok, _} = Riak:put(Block2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]),
     if
         Refs =:= 1 ->
             Dead = riak_object:new(?D_BUCKET, riak_object:key(Block), dead),
-            {ok, _} = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]);
+            ok = Riak:put(Dead, 2, 2, ?TIMEOUT_DEFAULT);
         true ->
             ok
     end,
@@ -394,7 +391,8 @@ bury(Riak) ->
 
 bury(Riak, DeadNode) ->
     Name = riak_object:key(DeadNode),
-    {ok, Value} = luwak_tree:get(Riak, Name),
+    {ok, Node} = Riak:get(?N_BUCKET, Name, 2),
+    Value = riak_object:get_value(Node),
     %% make sure the node hasn't been resurrected
     Refs =
         case Value of
@@ -402,11 +400,21 @@ bury(Riak, DeadNode) ->
                 N#n.refs;
             PL ->
                 proplists:get_value(refs, PL)
-    end,
+        end,
     if
-        Refs =:= 0 ->
-            ok = Riak:delete(?N_BUCKET, Name, 2);
+        Refs =:= 1 ->
+            %% the only ref is it's dead parent, safe to delete
+            ok = Riak:delete(?N_BUCKET, Name, 2),
+            ok = Riak:delete(?D_BUCKET, Name, 2);
         true ->
-            ok
-    end,
-    ok = Riak:delete(?D_BUCKET, Name, 2).
+            Value2 =
+                case Value of
+                    #n{} = N2 ->
+                        N2#n{refs=Refs - 1};
+                    PL2 ->
+                        lists:keyreplace(refs, 1, PL2, {refs, Refs - 1})
+                end,
+            Node2 = riak_object:update_value(Node, Value2),
+            ok = Riak:put(Node2, 2, 2, ?TIMEOUT_DEFAULT),
+            ok = Riak:delete(?D_BUCKET, Name, 2)
+    end.

@@ -8,7 +8,8 @@
          get_range/7,
          truncate/7,
          truncate/1,
-         reap/1]).
+         reap/1,
+         bury/1]).
 
 -include_lib("luwak.hrl").
 
@@ -363,7 +364,7 @@ decr_ref(Riak, Node, Value = #n{children=Children, refs=Refs}) ->
         true ->
             ok
     end,
-    [{?N_BUCKET, Name} || {Name,_} <- Children] ;
+    [{?N_BUCKET, Name} || {Name,_} <- Children];
 decr_ref(Riak, Block, Value) ->
     Refs = proplists:get_value(refs, Value),
     Value2 = lists:keyreplace(refs, 1, Value, {refs, Refs - 1}),
@@ -377,3 +378,30 @@ decr_ref(Riak, Block, Value) ->
             ok
     end,
     [].
+
+bury(Riak) ->
+    Del =
+        fun(DeadNode, undefined, none) ->
+                bury(Riak, DeadNode)
+        end,
+    {ok, []} = Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, Del}, none, false}]),
+    ok.
+
+bury(Riak, DeadNode) ->
+    Name = riak_object:key(DeadNode),
+    {ok, Value} = luwak_tree:get(Riak, Name),
+    %% make sure the node hasn't been resurrected
+    Refs =
+        case Value of
+            #n{} = N ->
+                N#n.refs;
+            PL ->
+                proplists:get_value(refs, PL)
+    end,
+    if
+        Refs =:= 0 ->
+            ok = Riak:delete(?N_BUCKET, Name, 2);
+        true ->
+            ok
+    end,
+    ok = Riak:delete(?D_BUCKET, Name, 2).

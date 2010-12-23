@@ -3,6 +3,12 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("luwak/include/luwak.hrl").
 
+-define(match(T), fun(T) ->
+                          true;
+                     (_) ->
+                          false
+                  end).
+
 create_simple_tree_test() ->
   test_helper:riak_test(fun(Riak) ->
       {ok, File} = luwak_file:create(Riak, <<"file1">>, [{tree_order,4},{block_size,5}], dict:new()),
@@ -133,5 +139,53 @@ reap_test() ->
               ?assert(lists:all(fun(ok) -> true; (_) -> false end,
                                 luwak_tree:reap(Riak))),
               ?assertEqual({error, notfound}, Riak:get(?R_BUCKET, RootName)),
-              {ok, _Obj2} = Riak:get(?D_BUCKET, RootName)
+              {ok, _Obj2} = Riak:get(?D_BUCKET, RootName),
+              %% allow time for keys to be deleted from the reap
+              %% bucket
+              timer:sleep(500)
       end).
+
+bury_test() ->
+    test_helper:riak_test(
+      fun(Riak) ->
+              {ok, F1} = luwak_file:create(Riak, <<"bury_test">>, dict:new()),
+              {ok, _, F2} = luwak_io:put_range(Riak, F1, 0, <<"bury_test">>),
+              {ok,Root} = Riak:get(?N_BUCKET,
+                                   luwak_file:get_property(F2, root),
+                                   2),
+              Names = get_names(Riak, Root),
+              {ok, _, _} = luwak_io:put_range(Riak, F2, 0, <<"bury_test2">>),
+              ?assert(lists:all(?match(ok), luwak_tree:reap(Riak))),
+              ?assert(lists:all(?match(false), exists(Riak, ?R_BUCKET, Names))),
+              ?assert(lists:all(?match(true), exists(Riak, ?D_BUCKET, Names))),
+              ok = luwak_tree:bury(Riak),
+              ?assert(lists:all(?match(false), exists(Riak, ?R_BUCKET, Names))),
+              ?assert(lists:all(?match(false), exists(Riak, ?N_BUCKET, Names))),
+              ?assert(lists:all(?match(false), exists(Riak, ?D_BUCKET, Names)))
+      end).
+
+get_names(Riak, Root) ->
+    get_names(Riak, [riak_object:get_value(Root)], [riak_object:key(Root)]).
+
+get_names(Riak, [#n{children=Children}|Rest], Acc) ->
+    Nodes = [Riak:get(?N_BUCKET, Name, 2) || {Name,_} <- Children],
+    NodeZip = [{riak_object:key(Obj),
+                riak_object:get_value(Obj)} || {ok,Obj} <- Nodes],
+    {Names, Values} = lists:unzip(NodeZip),
+    get_names(Riak, [Values|Rest], Names ++ Acc);
+get_names(Riak, [_Block|Rest], Acc) ->
+    get_names(Riak, Rest, Acc);
+get_names(_Riak, [], Acc) ->
+    Acc.
+
+exists(Riak, Bucket, Names) ->
+    Get =
+        fun(Name) ->
+                case Riak:get(Bucket, Name, 2) of
+                    {ok, _} ->
+                        true;
+                    {error, notfound} ->
+                        false
+                end
+        end,
+    lists:map(Get, Names).

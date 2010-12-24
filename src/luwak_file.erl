@@ -105,6 +105,10 @@ length(Riak, File) ->
 %%      the blocks and tree for that file remain untouched.  A GC operation
 %%      (not yet implemented) will be required to clean them up properly.
 delete(Riak, Name) ->
+    {ok, File} = get(Riak, Name),
+    Value = riak_object:get_value(File),
+    DFile = riak_object:new(?D_BUCKET, Name, Value),
+    ok = Riak:put(DFile, 2, 2, ?TIMEOUT_DEFAULT),
     Riak:delete(?O_BUCKET, Name, 2).
 
 %% @spec get(Riak :: riak(), Name :: binary()) -> {ok, File} | {error, Reason}

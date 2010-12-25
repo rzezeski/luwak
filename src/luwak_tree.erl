@@ -10,9 +10,9 @@
          truncate/1,
          get_roots/1,
          get_roots2/1,
-         get_ref_counts/4,
+         get_nodes/4,
          gc/2,
-         gc2/3,
+         gc/3,
          count_nodes/2,
          wtf/1]).
 
@@ -323,26 +323,112 @@ truncate(List) when is_list(List) ->
     lists:map(fun({Data,Length}) -> {truncate(Data),Length} end, List);
 truncate(<<Prefix:8/binary, _/binary>>) -> Prefix.
 
-%% several phase mapred across entire node bucket
-%%
-%% 1) map: for any inner node write [{Name,1}] for all it's children,
-%% and for any block write [{Name,0}]
-%%
-%% 2) reduce: sum the tally for each name
-%%
-%% 3) reduce: filter out all non-zero tallies
-%%
-%% 4) map: delete each name left (what happens if a concurrent write
-%% recreates a node, then you'll delete something you shouldn't...fuck
-%% this is hard)
-%% 
+%% Garbage Collection
+gc(Riak, Nodes, MaxLevel) ->
+    Levels = lists:seq(1, MaxLevel),
+    Inputs1 = lists:foldl(fun(I, Acc) -> dict:store(I, [], Acc) end, dict:new(), lists:seq(1,MaxLevel)),
+    F = fun(Name, {0, Level}, Acc) ->
+                dict:append(Level, {?N_BUCKET, Name}, Acc);
+           (_, _, Acc) ->
+                Acc
+        end,
+    Inputs2 = dict:fold(F, Inputs1, Nodes),
+    Del =
+        fun(Node, undefined, none) ->
+                #n{children = Children} = riak_object:get_value(Node),
+                lists:foreach(del(Riak), [Name || {Name, _} <- Children]),
+                Riak:delete(?N_BUCKET, riak_object:key(Node), 2),
+                []
+        end,
+    lists:foreach(fun(I) ->
+                          In = dict:fetch(I, Inputs2),
+                          Riak:mapred(In, [{map, {qfun, Del}, none, false}])
+                  end,
+                  lists:reverse(Levels)).
+
+get_roots(Riak) ->
+    Level = 1,                                  % tree level
+    {ok, [Deleted]} = Riak:mapred_bucket(?D_BUCKET,
+                                       [{map, {qfun, root_map(0, Level)}, none, false},
+                                        {reduce, {qfun, fun tally/2}, none, true}]),
+    {ok, [Exist]} = Riak:mapred_bucket(?O_BUCKET,
+                                    [{map, {qfun, root_map(1, Level)}, none, false},
+                                     {reduce, {qfun, fun tally/2}, none, true}]),
+    Roots = dict:merge(fun add/3, Deleted, Exist),
+    Inputs = [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(Roots)],
+    {Inputs, Roots}.
+
+get_nodes(_Riak, [], Nodes, Level) ->
+    {Nodes, Level};
+get_nodes(Riak, Inputs, Nodes, Level) ->
+    Mark =
+        fun(Node, Num, none) ->
+                Tally = if Num > 0 -> 1; true -> 0 end,
+                Value = riak_object:get_value(Node),
+                case Value of
+                    #n{children = Children} ->
+                        [dict:from_list([{Name, {Tally, Level}} || {Name, _} <- Children])];
+                    _Block ->
+                        []
+                end
+        end,
+    {ok, [Tallies]} = Riak:mapred(Inputs,
+                                  [{map, {qfun, Mark}, none, false},
+                                   {reduce, {qfun, fun tally/2}, none, true}]),
+    case dict:size(Tallies) of
+        0 ->
+            {Nodes, Level - 1};
+        _ ->
+            Inputs2 = [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(Tallies)],
+            Nodes2 = dict:merge(fun add/3, Nodes, Tallies),
+            get_nodes(Riak, Inputs2, Nodes2, Level + 1)
+    end.
+
+counts(I, Level) ->
+    fun(undefined, Acc) -> Acc;
+       (N, Acc)         -> [{N, {I, Level}}|Acc]
+    end.
+
+add(_, {C1, L1}, {C2, L2}) ->
+    L3 = if
+             L1 < L2 ->
+                 L1;
+             true ->
+                 L2
+         end,
+    {C1 + C2, L3}.
+
+
+root_map(Ref, Level) ->
+    fun(File, undefined, none) ->
+            Value = riak_object:get_value(File),
+            Root = proplists:get_value(root, Value),
+            Ancestors = proplists:get_value(ancestors, Value),
+            [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))]
+    end.
+
+del(Riak) ->
+    fun(Name) ->
+            Riak:delete(?N_BUCKET, Name, 2)
+    end.
+
+tally(Tallies, none) ->
+    Merge = fun(T, Acc) ->
+                    dict:merge(fun add/3, T, Acc)
+            end,
+    [lists:foldl(Merge, dict:new(), Tallies)].
+
+
+%%% ====================================
+%%% whatever
+%%% ====================================
 
 to_input(I) ->
     fun(undefined, Acc) -> Acc;
        (N, Acc)         -> [{{?N_BUCKET, N}, I}|Acc]
     end.
     
-get_roots(Riak) ->
+get_roots2(Riak) ->
     RootDeleted =
         fun(File, undefined, none) ->
                 Value = riak_object:get_value(File),
@@ -362,113 +448,6 @@ get_roots(Riak) ->
     {ok, Live} = Riak:mapred_bucket(?O_BUCKET,
                                     [{map, {qfun, RootLive}, none, true}]),
     Deleted ++ Live.
-
-counts(I, Level) ->
-    fun(undefined, Acc) -> Acc;
-       (N, Acc)         -> [{N, {I, Level}}|Acc]
-    end.
-
-add(_, {C1, Lvl}, {C2, Lvl}) -> {C1 + C2, Lvl}.
-
-get_roots2(Riak) ->
-    Level = 1,                                  % tree level
-    RootDeleted =
-        fun(File, undefined, none) ->
-                Value = riak_object:get_value(File),
-                Root = proplists:get_value(root, Value),
-                Ancestors = proplists:get_value(ancestors, Value),
-                [dict:from_list(lists:foldl(counts(0, Level), [], [Root|Ancestors]))]
-        end,
-    RootLive =
-        fun(File, undefined, none) ->
-                Value = riak_object:get_value(File),
-                Root = proplists:get_value(root, Value),
-                Ancestors = proplists:get_value(ancestors, Value),
-                [dict:from_list(lists:foldl(counts(1, Level), [], [Root|Ancestors]))]
-        end,
-    Sum =
-        fun(Tallies, none) ->
-                [lists:foldl(fun(T, Acc) ->
-                                     dict:merge(fun add/3, T, Acc)
-                             end,
-                             dict:new(),
-                             Tallies)]
-        end,
-    {ok, [Deleted]} = Riak:mapred_bucket(?D_BUCKET,
-                                       [{map, {qfun, RootDeleted}, none, false},
-                                        {reduce, {qfun, Sum}, none, true}]),
-    %% io:format("Deleted: ~p~n", [Deleted]),
-    {ok, [Live]} = Riak:mapred_bucket(?O_BUCKET,
-                                    [{map, {qfun, RootLive}, none, false},
-                                     {reduce, {qfun, Sum}, none, true}]),
-    %% io:format("Live: ~p~n", [Live]),
-    RefCounts = dict:merge(fun add/3, Deleted, Live),
-    Inputs = [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(RefCounts)],
-    {Inputs, RefCounts}.
-
-%% calculates inner node ref counts
-get_ref_counts(_Riak, [], RefCounts, Level) ->
-    {RefCounts, Level};
-get_ref_counts(Riak, Inputs, RefCounts, Level) ->
-    Mark =
-        fun(Node, Num, none) ->
-                Tally = if Num > 0 -> 1; true -> 0 end,
-                Value = riak_object:get_value(Node),
-                case Value of
-                    #n{children = Children} ->
-                        [dict:from_list([{Name, {Tally, Level}} || {Name, _} <- Children])];
-                    _Block ->
-                        []
-                end
-        end,
-    Sum =
-        fun(Tallies, none) ->
-                [lists:foldl(fun(T, Acc) ->
-                                     dict:merge(fun add/3, T, Acc)
-                             end,
-                             dict:new(),
-                             Tallies)]
-        end,
-    case Riak:mapred(Inputs,
-                     [{map, {qfun, Mark}, none, false},
-                      {reduce, {qfun, Sum}, none, false}]) of
-        {ok, [Tallies]} ->
-            NewInputs = [{{?N_BUCKET, Name}, Refs} || {Name, Refs} <- dict:to_list(Tallies)],
-            NewRefCounts = dict:merge(fun add/3, RefCounts, Tallies),
-            get_ref_counts(Riak, NewInputs, NewRefCounts, Level + 1);
-        {ok, []}  ->
-            {RefCounts, Level}
-    end.
-
-del(Riak) ->
-    fun(Name) ->
-            Riak:delete(?N_BUCKET, Name, 2)
-    end.
-
-gc2(Riak, RefCounts, MaxLevel) ->
-    Levels = lists:seq(1, MaxLevel),
-    Inputs1 = lists:foldl(fun(I, Acc) -> dict:store(I, [], Acc) end, dict:new(), lists:seq(1,MaxLevel)),
-    io:format("Inputs1: ~p~n", [Inputs1]),
-    F = fun(Name, {0, Level}, Acc) ->
-                dict:append(Level, {?N_BUCKET, Name}, Acc)
-        end,
-    Inputs2 = dict:fold(F, Inputs1, RefCounts),
-    io:format("Inputs2: ~p~n", [Inputs2]),
-    %% Inputs = [{?N_BUCKET, Name} || {Name, {0, Level}} <- dict:to_list(RefCounts)],
-    Del =
-        fun(Node, undefined, none) ->
-                #n{children = Children} = riak_object:get_value(Node),
-                lists:foreach(del(Riak), [Name || {Name, _} <- Children]),
-                Riak:delete(?N_BUCKET, riak_object:key(Node), 2),
-                []
-        end,
-    lists:foreach(fun(I) ->
-                          In = dict:fetch(I, Inputs2),
-                          Riak:mapred(In, [{map, {qfun, Del}, none, false}])
-                  end,
-                  lists:reverse(Levels)).
-
-
 
 
 wtf(Riak) ->
@@ -510,8 +489,14 @@ gc(Riak, Timeout) ->
 
 count_nodes(Riak, Timeout) ->
     Ok =
-        fun(_N, undefined, none) ->
-                [1]
+        fun(N, undefined, none) ->
+                Value = riak_object:get_value(N),
+                case Value of
+                    #n{} ->
+                        [1];
+                    _ ->
+                        []
+                end
         end,
     Sum =
         fun(Counts, none) ->
@@ -519,4 +504,4 @@ count_nodes(Riak, Timeout) ->
         end,
     Qry = [{map, {qfun, Ok}, none, false},
            {reduce, {qfun, Sum}, none, true}],
-    Riak:mapred_bucket(?O_BUCKET, Qry, Timeout).
+    Riak:mapred_bucket(?N_BUCKET, Qry, Timeout).

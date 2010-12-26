@@ -335,8 +335,6 @@ gc(Riak, Nodes, MaxLevel) ->
     Inputs2 = dict:fold(F, Inputs1, Nodes),
     Del =
         fun(Node, undefined, none) ->
-                #n{children = Children} = riak_object:get_value(Node),
-                lists:foreach(del(Riak), [Name || {Name, _} <- Children]),
                 Riak:delete(?N_BUCKET, riak_object:key(Node), 2),
                 []
         end,
@@ -405,11 +403,6 @@ root_map(Ref, Level) ->
             Root = proplists:get_value(root, Value),
             Ancestors = proplists:get_value(ancestors, Value),
             [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))]
-    end.
-
-del(Riak) ->
-    fun(Name) ->
-            Riak:delete(?N_BUCKET, Name, 2)
     end.
 
 tally(Tallies, none) ->

@@ -11,7 +11,8 @@
          update_root/3,
          update_checksum/3, 
          name/1,
-         length/2]).
+         length/2,
+         prune/3]).
 
 -include_lib("luwak.hrl").
 
@@ -162,3 +163,22 @@ update_checksum(Riak, Obj, ChecksumFun) ->
 %% @doc returns the name of the given file handle.
 name(Obj) ->
     riak_object:key(Obj).
+
+%% @spec prune(Riak :: riak(), File :: luwak_file(), Keep :: integer()) -> {ok, File} | {error, Reason}
+%% @doc prune ancestor list.  The Keep parameter determines how many ancestors
+%% to keep.
+prune(Riak, File, Keep) when Keep >= 0 ->
+    V1 = riak_object:get_value(File),
+    A1 = proplists:get_value(ancestors, V1),
+    {A2, Delete} = lists:split(Keep, A1),
+    F =
+        fun(undefined) ->
+                ok;
+           (Name) ->
+                Obj = riak_object:new(?D_BUCKET, Name, deleted_node),
+                ok = Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT)
+        end,
+    lists:foreach(F, Delete),
+    V2 = lists:keyreplace(ancestors, 1, V1, {ancestors, A2}),
+    File2 = riak_object:update_value(File, V2),
+    Riak:put(File2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).

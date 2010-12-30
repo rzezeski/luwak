@@ -10,7 +10,7 @@
          truncate/1,
          get_roots/1,
          get_nodes/4,
-         gc/3]).
+         gc/1]).
 
 -include_lib("luwak.hrl").
 
@@ -320,38 +320,36 @@ truncate(List) when is_list(List) ->
 truncate(<<Prefix:8/binary, _/binary>>) -> Prefix.
 
 %% Garbage Collection
-gc(Riak, Nodes, MaxLevel) ->
+gc(Riak) ->
+    {I1, R1} = get_roots(Riak),
+    {Nodes, MaxLevel} = get_nodes(Riak, I1, R1, 2),
     Levels = lists:seq(1, MaxLevel),
-    Inputs1 = lists:foldl(fun(I, Acc) -> dict:store(I, [], Acc) end, dict:new(), lists:seq(1,MaxLevel)),
-    F = fun(Name, {0, Level}, Acc) ->
-                dict:append(Level, {?N_BUCKET, Name}, Acc);
-           (_, _, Acc) ->
-                Acc
-        end,
-    Inputs2 = dict:fold(F, Inputs1, Nodes),
-    Del =
-        fun(Node, undefined, none) ->
-                Bucket = riak_object:bucket(Node),
-                Riak:delete(Bucket, riak_object:key(Node), 2),
-                []
-        end,
+    GL = group_levels(Nodes, Levels),
     lists:foreach(fun(I) ->
-                          In = dict:fetch(I, Inputs2),
-                          Riak:mapred(In, [{map, {qfun, Del}, none, false}])
+                          In = dict:fetch(I, GL),
+                          Riak:mapred(In, [{map, {qfun, fun del/3}, none, false}])
                   end,
                   lists:reverse(Levels)),
-    Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, Del}, none, false}]).
+    Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, fun del/3}, none, false}]).
+
+
+del(Node, undefined, none) ->
+    Bucket = riak_object:bucket(Node),
+    {ok, Riak} = riak:local_client(),
+    Riak:delete(Bucket, riak_object:key(Node), 2),
+    [].
+
 
 get_roots(Riak) ->
     Level = 1,                                  % tree level
     {ok, [Deleted]} = Riak:mapred_bucket(?D_BUCKET,
-                                       [{map, {qfun, root_map(0, Level)}, none, false},
+                                       [{map, {qfun, fun root_map/3}, {0, Level}, false},
                                         {reduce, {qfun, fun tally/2}, none, true}]),
     {ok, [Exist]} = Riak:mapred_bucket(?O_BUCKET,
-                                    [{map, {qfun, root_map(1, Level)}, none, false},
+                                    [{map, {qfun, fun root_map/3}, {1, Level}, false},
                                      {reduce, {qfun, fun tally/2}, none, true}]),
     Roots = dict:merge(fun add/3, Deleted, Exist),
-    Inputs = [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(Roots)],
+    Inputs = dict_to_inputs(Roots),
     {Inputs, Roots}.
 
 get_nodes(_Riak, [], Nodes, Level) ->
@@ -375,10 +373,24 @@ get_nodes(Riak, Inputs, Nodes, Level) ->
         0 ->
             {Nodes, Level - 1};
         _ ->
-            Inputs2 = [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(Tallies)],
+            Inputs2 = dict_to_inputs(Tallies),
             Nodes2 = dict:merge(fun add/3, Nodes, Tallies),
             get_nodes(Riak, Inputs2, Nodes2, Level + 1)
     end.
+
+dict_to_inputs(D) ->
+    [{{?N_BUCKET, Name}, Refs} || {Name, {Refs, _}} <- dict:to_list(D)].
+
+group_levels(Nodes, Levels) ->
+    GL = lists:foldl(fun(I, Acc) -> dict:store(I, [], Acc) end,
+                     dict:new(),
+                     Levels),
+    F = fun(Name, {0, Level}, Acc) ->
+                dict:append(Level, {?N_BUCKET, Name}, Acc);
+           (_, _, Acc) ->
+                Acc
+        end,
+    dict:fold(F, GL, Nodes).
 
 counts(I, Level) ->
     fun(undefined, Acc) -> Acc;
@@ -394,14 +406,11 @@ add(_, {C1, L1}, {C2, L2}) ->
          end,
     {C1 + C2, L3}.
 
-
-root_map(Ref, Level) ->
-    fun(File, undefined, none) ->
-            Value = riak_object:get_value(File),
-            Root = proplists:get_value(root, Value),
-            Ancestors = proplists:get_value(ancestors, Value),
-            [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))]
-    end.
+root_map(File, undefined, {Ref, Level}) ->
+    Value = riak_object:get_value(File),
+    Root = proplists:get_value(root, Value),
+    Ancestors = proplists:get_value(ancestors, Value),
+    [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))].
 
 tally(Tallies, none) ->
     Merge = fun(T, Acc) ->

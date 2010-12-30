@@ -335,14 +335,16 @@ gc(Riak, Nodes, MaxLevel) ->
     Inputs2 = dict:fold(F, Inputs1, Nodes),
     Del =
         fun(Node, undefined, none) ->
-                Riak:delete(?N_BUCKET, riak_object:key(Node), 2),
+                Bucket = riak_object:bucket(Node),
+                Riak:delete(Bucket, riak_object:key(Node), 2),
                 []
         end,
     lists:foreach(fun(I) ->
                           In = dict:fetch(I, Inputs2),
                           Riak:mapred(In, [{map, {qfun, Del}, none, false}])
                   end,
-                  lists:reverse(Levels)).
+                  lists:reverse(Levels)),
+    Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, Del}, none, false}]).
 
 get_roots(Riak) ->
     Level = 1,                                  % tree level

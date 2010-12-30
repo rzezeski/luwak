@@ -332,13 +332,11 @@ gc(Riak) ->
                   lists:reverse(Levels)),
     Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, fun del/3}, none, false}]).
 
-
 del(Node, undefined, none) ->
     Bucket = riak_object:bucket(Node),
     {ok, Riak} = riak:local_client(),
     Riak:delete(Bucket, riak_object:key(Node), 2),
     [].
-
 
 get_roots(Riak) ->
     Level = 1,                                  % tree level
@@ -406,11 +404,15 @@ add(_, {C1, L1}, {C2, L2}) ->
          end,
     {C1 + C2, L3}.
 
-root_map(File, undefined, {Ref, Level}) ->
-    Value = riak_object:get_value(File),
-    Root = proplists:get_value(root, Value),
-    Ancestors = proplists:get_value(ancestors, Value),
-    [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))].
+root_map(Obj, undefined, {Ref, Level}) ->
+    case riak_object:get_value(Obj) of
+        deleted_node ->
+            [dict:from_list([{riak_object:key(Obj), {Ref, Level}}])];
+        FileValue ->
+            Root = proplists:get_value(root, FileValue),
+            Ancestors = proplists:get_value(ancestors, FileValue),
+            [dict:from_list(lists:foldl(counts(Ref, Level), [], [Root|Ancestors]))]
+    end.
 
 tally(Tallies, none) ->
     Merge = fun(T, Acc) ->

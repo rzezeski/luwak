@@ -332,6 +332,8 @@ gc(Riak) ->
                   lists:reverse(Levels)),
     Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, fun del/3}, none, false}]).
 
+del({error, notfound}, _, _) ->
+    [];
 del(Node, undefined, none) ->
     Bucket = riak_object:bucket(Node),
     {ok, Riak} = riak:local_client(),
@@ -354,7 +356,9 @@ get_nodes(_Riak, [], Nodes, Level) ->
     {Nodes, Level};
 get_nodes(Riak, Inputs, Nodes, Level) ->
     Mark =
-        fun(Node, Num, none) ->
+        fun({error, notfound}, _, _) ->
+                [];
+           (Node, Num, none) ->
                 Tally = if Num > 0 -> 1; true -> 0 end,
                 Value = riak_object:get_value(Node),
                 case Value of

@@ -12,7 +12,8 @@
              luwak_put_stream,
              luwak_get_stream,
              luwak_checksum,
-             luwak_wm_file
+             luwak_wm_file,
+             luwak_wm_gc
             ]},
   {registered, []},
   {applications, [

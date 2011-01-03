@@ -27,4 +27,5 @@ add_webmachine_routes() ->
     Props = [{prefix, Name}],
     [ webmachine_router:add_route(R)
       || R <- [{[Name, key], luwak_wm_file, Props},
-               {[Name],      luwak_wm_file, Props}] ].
+               {[Name],      luwak_wm_file, Props},
+               {[Name, "_gc"], luwak_wm_gc, []} ] ].

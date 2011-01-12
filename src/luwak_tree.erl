@@ -408,6 +408,8 @@ add(_, {C1, L1}, {C2, L2}) ->
          end,
     {C1 + C2, L3}.
 
+root_map({error, notfound}, _, _) ->
+    [];
 root_map(Obj, undefined, {Ref, Level}) ->
     case riak_object:get_value(Obj) of
         deleted_node ->

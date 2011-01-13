@@ -11,7 +11,8 @@
          get_roots/1,
          get_nodes/4,
          gc/1,
-         gc_orphans/1]).
+         gc_orphans/1,
+         gc_orphans/2]).
 
 -include_lib("luwak.hrl").
 
@@ -431,15 +432,19 @@ tally(Tallies, none) ->
 %% an orphan is a node (at any level of the tree) that has nothing
 %% referencing it, this call will remove things from the top-down.
 gc_orphans(Riak) ->
+    gc_orphans(Riak, ?TIMEOUT_DEFAULT).
+
+gc_orphans(Riak, Timeout) ->
     {ok, Roots} = Riak:mapred_bucket(?O_BUCKET,
-                                     [{map, {qfun, fun root_map2/3}, none, true}]),
+                                     [{map, {qfun, fun root_map2/3}, none, true}],
+                                     Timeout),
     {ok, Nodes} = Riak:mapred_bucket(?N_BUCKET,
                                      [{map, {qfun, fun tally/3}, none, false},
-                                      {reduce, {qfun, fun sum/2}, none, true}]),
+                                      {reduce, {qfun, fun sum/2}, none, true}],
+                                     Timeout),
     Delete = lists:filter(fun zero/1, sum(Roots ++ Nodes, none)),
     lists:foreach(fun del/1, Delete),
     {ok, length(Delete)}.
-
 
 root_map2({error, notfound}, _, _) ->
     [];

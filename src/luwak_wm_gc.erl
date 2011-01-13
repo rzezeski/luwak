@@ -17,6 +17,6 @@ allowed_methods(RD, Ctx) ->
 
 process_post(RD, Ctx) ->
     {ok, C} = riak:local_client(),
-    luwak_tree:gc(C),
-    {true, RD, Ctx}.
-
+    {ok, Deleted} = luwak_tree:gc_orphans(C),
+    RD2 = wrq:set_resp_body(list_to_binary(integer_to_list(Deleted)), RD),
+    {true, RD2, Ctx}.

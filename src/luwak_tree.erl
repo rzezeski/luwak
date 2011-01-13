@@ -10,7 +10,8 @@
          truncate/1,
          get_roots/1,
          get_nodes/4,
-         gc/1]).
+         gc/1,
+         gc_orphans/1]).
 
 -include_lib("luwak.hrl").
 
@@ -332,6 +333,7 @@ gc(Riak) ->
                   lists:reverse(Levels)),
     Riak:mapred_bucket(?D_BUCKET, [{map, {qfun, fun del/3}, none, false}]).
 
+
 del({error, notfound}, _, _) ->
     [];
 del(Node, undefined, none) ->
@@ -425,3 +427,56 @@ tally(Tallies, none) ->
                     dict:merge(fun add/3, T, Acc)
             end,
     [lists:foldl(Merge, dict:new(), Tallies)].
+
+%% an orphan is a node (at any level of the tree) that has nothing
+%% referencing it, this call will remove things from the top-down.
+gc_orphans(Riak) ->
+    {ok, Roots} = Riak:mapred_bucket(?O_BUCKET,
+                                     [{map, {qfun, fun root_map2/3}, none, true}]),
+    {ok, Nodes} = Riak:mapred_bucket(?N_BUCKET,
+                                     [{map, {qfun, fun tally/3}, none, false},
+                                      {reduce, {qfun, fun sum/2}, none, true}]),
+    Delete = lists:filter(fun zero/1, sum(Roots ++ Nodes, none)),
+    lists:foreach(fun del/1, Delete),
+    {ok, length(Delete)}.
+
+
+root_map2({error, notfound}, _, _) ->
+    [];
+root_map2(Obj, undefined, none) ->
+    V = riak_object:get_value(Obj),
+    Root = proplists:get_value(root, V),
+    Ancestors = lists:filter(fun defined/1, proplists:get_value(ancestors, V)),
+    [{Name, 1} || Name <- [Root|Ancestors]].
+
+defined(undefined) ->
+    false;
+defined(_) ->
+    true.
+
+tally({error, notfound}, _, _) ->
+    [];
+tally(Obj, undefined, none) ->
+    Value = riak_object:get_value(Obj),
+    Name = riak_object:key(Obj),
+    case Value of
+        #n{children = Children} ->
+            [{Name, 0} | [{ChildName, 1} || {ChildName, _} <- Children]];
+        _Block ->
+            [{Name, 0}]
+    end.
+
+sum(Tallies, none) ->
+    F = fun({Name, T}, D) ->
+                dict:update_counter(Name, T, D)
+        end,
+    dict:to_list(lists:foldl(F, dict:new(), Tallies)).
+
+zero({_, 0}) ->
+    true;
+zero({_, _}) ->
+    false.
+
+del({Name, 0}) ->
+    {ok, Riak} = riak:local_client(),
+    Riak:delete(?N_BUCKET, Name, 1).

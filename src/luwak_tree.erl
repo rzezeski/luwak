@@ -435,12 +435,12 @@ gc_orphans(Riak) ->
     gc_orphans(Riak, ?TIMEOUT_DEFAULT).
 
 gc_orphans(Riak, Timeout) ->
-    {ok, Roots} = Riak:mapred_bucket(?O_BUCKET,
-                                     [{map, {qfun, fun root_map2/3}, none, true}],
-                                     Timeout),
     %% Don't GC anything newer than now or else dangling pointers may
     %% result
     Now = erlang:now(),
+    {ok, Roots} = Riak:mapred_bucket(?O_BUCKET,
+                                     [{map, {qfun, fun root_map2/3}, none, true}],
+                                     Timeout),
     {ok, Nodes} = Riak:mapred_bucket(?N_BUCKET,
                                      [{map, {qfun, fun tally/3}, Now, false},
                                       {reduce, {qfun, fun sum/2}, none, true}],

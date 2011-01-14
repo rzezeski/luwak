@@ -495,7 +495,9 @@ accept_doc_body(RD, Ctx=#ctx{key=K, client=C}) ->
                  {ok, H} = luwak_file:create(C, K, dict:new()),
                  H
          end,
-    {ok,H1} = luwak_file:set_attributes(C, H0, UserMetaMD),
+    Attr = luwak_file:get_attributes(H0),
+    Attr2 = dict:merge(fun(_Key, _V1, V2) -> V2 end, Attr, UserMetaMD),
+    {ok,H1} = luwak_file:set_attributes(C, H0, Attr2),
     HCtx = Ctx#ctx{handle={ok,H1}},
     {accept_streambody(RD, HCtx), RD, HCtx}.
 

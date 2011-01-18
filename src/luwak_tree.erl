@@ -435,14 +435,16 @@ gc_orphans(Riak) ->
     gc_orphans(Riak, ?TIMEOUT_DEFAULT).
 
 gc_orphans(Riak, Timeout) ->
-    %% Don't GC anything newer than now or else dangling pointers may
-    %% result
-    Now = erlang:now(),
+    %% Don't GC anything created in last 10 minutes or else dangling
+    %% pointers may result
+    {NMs, Ns, NMu} = erlang:now(),
+    Before = {NMs, Ns - 600, NMu},
+
     {ok, Roots} = Riak:mapred_bucket(?O_BUCKET,
                                      [{map, {qfun, fun root_map2/3}, none, true}],
                                      Timeout),
     {ok, Nodes} = Riak:mapred_bucket(?N_BUCKET,
-                                     [{map, {qfun, fun tally/3}, Now, false},
+                                     [{map, {qfun, fun tally/3}, Before, false},
                                       {reduce, {qfun, fun sum/2}, none, true}],
                                      Timeout),
     Delete = lists:filter(fun zero/1, sum(Roots ++ Nodes, none)),
@@ -464,18 +466,18 @@ defined(_) ->
 
 tally({error, notfound}, _, _) ->
     [];
-tally(Obj, undefined, Now) ->
+tally(Obj, undefined, Before) ->
     Value = riak_object:get_value(Obj),
     Name = riak_object:key(Obj),
     case Value of
         #n{created = Created, children = Children} ->
-            if Created < Now ->
+            if Created < Before ->
                     [{Name, 0} | [{ChildName, 1} || {ChildName, _} <- Children]];
                true ->
                     []
             end;
         [_, {created, Created}, _] ->
-            if Created < Now ->
+            if Created < Before ->
                     [{Name, 0}];
                true ->
                     []

@@ -166,15 +166,7 @@ name(Obj) ->
 prune(Riak, File, Keep) when Keep >= 0 ->
     V1 = riak_object:get_value(File),
     A1 = proplists:get_value(ancestors, V1),
-    {A2, Delete} = lists:split(Keep, A1),
-    F =
-        fun(undefined) ->
-                ok;
-           (Name) ->
-                Obj = riak_object:new(?D_BUCKET, Name, deleted_node),
-                ok = Riak:put(Obj, 2, 2, ?TIMEOUT_DEFAULT)
-        end,
-    lists:foreach(F, Delete),
+    {A2, _Delete} = lists:split(Keep, A1),
     V2 = lists:keyreplace(ancestors, 1, V1, {ancestors, A2}),
     File2 = riak_object:update_value(File, V2),
     Riak:put(File2, 2, 2, ?TIMEOUT_DEFAULT, [{returnbody, true}]).

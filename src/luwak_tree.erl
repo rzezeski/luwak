@@ -83,13 +83,19 @@ truncate(Riak, File, Start, _Parent=#n{children=Children},
          Order, NodeOffset, BlockSize) ->
     ?debugFmt("B truncate(Riak, File, ~p, ~p, ~p, ~p, ~p)~n",
               [Start,_Parent,Order,NodeOffset,BlockSize]),
-    {Keep, {Recurse,_RecLength}, _} = which_child(Children, NodeOffset,
-                                                  Start, []),
-    KeepLength = luwak_tree_utils:blocklist_length(Keep),
-    {ok, SubNode} = get(Riak, Recurse),
-    {ok, NN} = truncate(Riak, File, Start, SubNode, Order,
-                        NodeOffset+KeepLength, BlockSize),
-    {ok, NewNode} = create_tree(Riak, Order, Keep ++ [NN]),
+    NewNode =
+        case which_child(Children, NodeOffset, Start, []) of
+            {Keep, {Recurse,_RecLength}, _} ->
+                KeepLength = luwak_tree_utils:blocklist_length(Keep),
+                {ok, SubNode} = get(Riak, Recurse),
+                {ok, NN} = truncate(Riak, File, Start, SubNode, Order,
+                                    NodeOffset+KeepLength, BlockSize),
+                {ok, NewNode0} = create_tree(Riak, Order, Keep ++ [NN]),
+                NewNode0;
+            {Keep, undefined, _} ->
+                {ok, NewNode0} = create_tree(Riak, Order, Keep),
+                NewNode0
+        end,
     NewNodeVal = riak_object:get_value(NewNode),
     {ok, {riak_object:key(NewNode),
           luwak_tree_utils:blocklist_length(NewNodeVal#n.children)}};

@@ -126,6 +126,16 @@ truncate_test() ->
       ?assertEqual(<<"abcdefg">>, iolist_to_binary(Blocks))
     end).
 
+exact_truncate_test() ->
+    test_helper:riak_test(fun(Riak) ->
+      {ok, File} = luwak_file:create(Riak, <<"extract_truncate">>, [],
+                                     dict:new()),
+      {ok, _, File1} = luwak_io:put_range(Riak, File, 0, <<"hello">>),
+      {ok, File2} = luwak_io:truncate(Riak, File1, 5),
+      Blocks = luwak_io:get_range(Riak, File2, 0, 5),
+      ?assertEqual(<<"hello">>, iolist_to_binary(Blocks))
+    end).
+
 sub_block_partial_write_test() ->
   test_helper:riak_test(fun(Riak) ->
       {ok, File} = luwak_file:create(Riak, <<"basho">>, [{block_size,1000}], dict:new()),
